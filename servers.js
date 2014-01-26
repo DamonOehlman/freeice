@@ -15,10 +15,10 @@ exports.stun = [
   'stunserver.org',
   'stun.softjoys.com',
   'stun.voiparound.com',
-  'stun.voipbuster.com',
+  'stun.voipbuster.com'
   // 'stun.voipstunt.com',
   // 'stun.voxgratia.org',
-  'stun.xten.com'
+  // 'stun.xten.com'
 ];
 
 // TURN servers
