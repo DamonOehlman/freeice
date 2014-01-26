@@ -68,7 +68,9 @@ in the process of reviewing the terms of those STUN servers included from
 the original list).  If it's ok to go, then please see the previous entry
 for how to add it.
 
-## Current List of Servers (as at last README generation)
+## Current List of Servers
+
+* current as at the time of last `README.md` file generation
 
 ```js
 // STUN servers
