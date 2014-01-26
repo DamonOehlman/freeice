@@ -1,7 +1,7 @@
 var stun = require('stun');
 var servers = require('../servers').stun;
 var test = require('tape');
-var MAX_RESPONSE_TIME = 2000;
+var MAX_RESPONSE_TIME = 5000;
 
 servers.forEach(function(url) {
   test('can connect to ' + url, function(t) {
@@ -12,11 +12,7 @@ servers.forEach(function(url) {
     var attr   = stun.attribute.MAPPED_ADDRESS;
     var client;
 
-    t.plan(5);
-    console.log('attempting to connect to host: ' + host + ', port: ' + port);
-    client = stun.connect(port, host);
-
-    client.once('response', function(packet) {
+    function handleResponse(packet) {
       t.equal(packet.class, 1);
       t.equal(packet.method, method);
       t.equal(packet.attrs[attr].family, 4);
@@ -28,10 +24,20 @@ servers.forEach(function(url) {
 
       // reset the response timer
       clearTimeout(responseTimer);
-    });
+    }
+    
+    t.plan(5);
+    console.log('attempting to connect to host: ' + host + ', port: ' + port);
+    client = stun.connect(port, host);
+    client.once('response', handleResponse);
 
     responseTimer = setTimeout(function() {
+      client.removeListener('response', handleResponse);
+      client.removeAllListeners('error');
+      client.close();
+
       t.fail('server did not respond within ' + MAX_RESPONSE_TIME + 'ms');
+      t.end();
     }, MAX_RESPONSE_TIME);
 
     client.on('error', t.ifError.bind(t));
