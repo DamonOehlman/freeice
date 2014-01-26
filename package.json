@@ -1,0 +1,29 @@
+{
+  "name": "freeice",
+  "version": "0.0.0",
+  "description": "Get free, randomized STUN and TURN servers for your WebRTC application",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "gendocs": "gendocs > README.md"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/DamonOehlman/freeice.git"
+  },
+  "keywords": [
+    "webrtc",
+    "ice",
+    "stun",
+    "turn"
+  ],
+  "author": "Damon Oehlman <damon.oehlman@gmail.com>",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/DamonOehlman/freeice/issues"
+  },
+  "homepage": "https://github.com/DamonOehlman/freeice",
+  "devDependencies": {
+    "rtc-quickconnect": "~0.8.3"
+  }
+}
