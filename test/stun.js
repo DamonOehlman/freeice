@@ -2,7 +2,7 @@ var stun = require('stun');
 var servers = require('../servers').stun;
 var test = require('tape');
 
-servers.slice(0, 1).forEach(function(url) {
+servers.forEach(function(url) {
   test('can connect to ' + url, function(t) {
     var parts = url.split(':');
     var host = parts[0];
@@ -21,8 +21,12 @@ servers.slice(0, 1).forEach(function(url) {
       t.equal(packet.attrs[attr].family, 4);
       t.notEqual(packet.attrs[attr].port, null);
       t.notEqual(packet.attrs[attr].address, null);
+
+      // close the client
+      client.close();
     });
 
     client.on('error', t.ifError.bind(t));
+    client.request();
   });
 });
