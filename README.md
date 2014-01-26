@@ -7,6 +7,7 @@ were sourced from this [gist](https://gist.github.com/zziuni/3741933).
 
 [![NPM](https://nodei.co/npm/freeice.png)](https://nodei.co/npm/freeice/)
 
+[![Build Status](https://travis-ci.org/DamonOehlman/freeice.png?branch=master)](https://travis-ci.org/DamonOehlman/freeice)
 
 ## Example Use
 
