@@ -1,6 +1,7 @@
 var stun = require('stun');
 var servers = require('../servers').stun;
 var test = require('tape');
+var MAX_RESPONSE_TIME = 2000;
 
 servers.forEach(function(url) {
   test('can connect to ' + url, function(t) {
@@ -24,7 +25,14 @@ servers.forEach(function(url) {
 
       // close the client
       client.close();
+
+      // reset the response timer
+      clearTimeout(responseTimer);
     });
+
+    responseTimer = setTimeout(function() {
+      t.fail('server did not respond within ' + MAX_RESPONSE_TIME + 'ms');
+    }, MAX_RESPONSE_TIME);
 
     client.on('error', t.ifError.bind(t));
     client.request();
