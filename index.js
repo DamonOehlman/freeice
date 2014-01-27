@@ -57,7 +57,7 @@ var freeice = module.exports = function(opts) {
   // if a list of servers has been provided, then use it instead of defaults
   var servers = (opts || {}).servers || require('./servers');
 
-  var stunCount = (opts || {}).stun || 1;
+  var stunCount = (opts || {}).stun || 2;
   var turnCount = (opts || {}).turn || 0;
   var selected;
 
