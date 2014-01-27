@@ -2,6 +2,16 @@ var stun = require('stun');
 var servers = require('../servers').stun;
 var test = require('tape');
 var MAX_RESPONSE_TIME = 5000;
+var freeice = require('..');
+
+test('by default 2 stun servers are returned', function(t) {
+  var iceServers;
+
+  t.plan(2);
+  iceServers = freeice();
+  t.ok(Array.isArray(iceServers), 'we have a server array');
+  t.equal(iceServers.length, 2, 'we have 2 servers');
+});
 
 servers.forEach(function(url) {
   test('can connect to ' + url, function(t) {
