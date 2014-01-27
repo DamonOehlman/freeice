@@ -1,11 +1,11 @@
 var freeice = require('./');
 
-// choose a single stun server
+// return 2 stun servers (default behaviour)
 console.log(freeice());
 
-// choose 2 stun servers
-console.log(freeice({ stun: 2 }));
+// choose 4 stun servers
+console.log(freeice({ stun: 4 }));
 
-// choose 2 stun servers and 1 turn server
+// choose 1 stun server and 1 turn server
 // will work once if we end up with free turn servers
-console.log(freeice({ stun: 2, turn: 1 }));
+console.log(freeice({ stun: 1, turn: 1 }));
