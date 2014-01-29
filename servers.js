@@ -12,6 +12,7 @@ exports.stun = [
   'stun.schlund.de',
   'stunserver.org',
   'stun.softjoys.com',
+  'stun.turnservers.com:3478',
   'stun.voiparound.com',
   'stun.voipbuster.com',
   'stun.voipstunt.com'
