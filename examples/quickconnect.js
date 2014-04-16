@@ -10,7 +10,7 @@ var qcOpts = {
 // go ahead and connect
 quickconnect('http://rtc.io/switchboard', qcOpts)
   .createDataChannel('chat')
-  .once('chat:open', function(dc, peerId) {
+  .once('channel:opened:chat', function(peerId, dc) {
     console.log('data channel opened for peer id: ' + peerId);
 
     dc.onmessage = function(evt) {

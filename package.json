@@ -24,8 +24,8 @@
   },
   "homepage": "https://github.com/DamonOehlman/freeice",
   "devDependencies": {
-    "rtc-quickconnect": "~0.8.3",
+    "rtc-quickconnect": "^1",
     "stun": "0.0.2",
-    "tape": "~2.3.2"
+    "tape": "^2.12.3"
   }
 }
