@@ -7,7 +7,7 @@ were sourced from this [gist](https://gist.github.com/zziuni/3741933).
 
 [![NPM](https://nodei.co/npm/freeice.png)](https://nodei.co/npm/freeice/)
 
-[![Build Status](https://travis-ci.org/DamonOehlman/freeice.png?branch=master)](https://travis-ci.org/DamonOehlman/freeice)
+[![Build Status](https://img.shields.io/travis/DamonOehlman/freeice.svg?branch=master)](https://travis-ci.org/DamonOehlman/freeice)
 
 ## Example Use
 
@@ -27,7 +27,7 @@ var qcOpts = {
 // go ahead and connect
 quickconnect('http://rtc.io/switchboard', qcOpts)
   .createDataChannel('chat')
-  .once('chat:open', function(dc, peerId) {
+  .once('channel:opened:chat', function(peerId, dc) {
     console.log('data channel opened for peer id: ' + peerId);
 
     dc.onmessage = function(evt) {
@@ -87,7 +87,9 @@ exports.stun = [
   'stun.rixtelecom.se',
   'stun.schlund.de',
   'stunserver.org',
-  'stun.softjoys.com',
+  // 'stun.softjoys.com',
+  'stun.stunprotocol.org:3478',
+  // 'stun.turnservers.com:3478',
   'stun.voiparound.com',
   'stun.voipbuster.com',
   'stun.voipstunt.com'
@@ -96,6 +98,7 @@ exports.stun = [
 // TURN servers
 exports.turn = [
 ];
+
 ```
 
 ## License(s)
