@@ -11,7 +11,7 @@ exports.stun = [
   'stun.rixtelecom.se',
   'stun.schlund.de',
   'stunserver.org',
-  'stun.softjoys.com',
+  // 'stun.softjoys.com',
   'stun.stunprotocol.org:3478',
   // 'stun.turnservers.com:3478',
   'stun.voiparound.com',
