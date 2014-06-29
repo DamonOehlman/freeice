@@ -1,7 +1,7 @@
 var stun = require('stun');
 var servers = require('../servers').stun;
 var test = require('tape');
-var MAX_RESPONSE_TIME = 5000;
+var MAX_RESPONSE_TIME = 10000;
 var freeice = require('..');
 
 test('by default 2 stun servers are returned', function(t) {
@@ -45,7 +45,7 @@ servers.forEach(function(url) {
       // reset the response timer
       clearTimeout(responseTimer);
     }
-    
+
     t.plan(5);
     console.log('attempting to connect to host: ' + host + ', port: ' + port);
     client = stun.connect(port, host);
