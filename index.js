@@ -1,6 +1,8 @@
 /* jshint node: true */
 'use strict';
 
+var normalice = require('normalice');
+
 /**
   # freeice
 
@@ -17,7 +19,7 @@
 
   As the `freeice` module generates ice servers in a list compliant with the
   WebRTC spec you will be able to use it with raw `RTCPeerConnection`
-  constructors and other WebRTC libraries. 
+  constructors and other WebRTC libraries.
 
   ## Hey, don't use my STUN/TURN server!
 
@@ -72,7 +74,7 @@ var freeice = module.exports = function(opts) {
     }
 
     return out.map(function(url) {
-      return { url: type + ':' + url };
+      return normalice(type + ':' + url);
     });
   }
 
