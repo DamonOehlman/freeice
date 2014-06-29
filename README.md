@@ -7,7 +7,7 @@ were sourced from this [gist](https://gist.github.com/zziuni/3741933).
 
 [![NPM](https://nodei.co/npm/freeice.png)](https://nodei.co/npm/freeice/)
 
-[![Build Status](https://img.shields.io/travis/DamonOehlman/freeice.svg?branch=master)](https://travis-ci.org/DamonOehlman/freeice)
+[![unstable](https://img.shields.io/badge/stability-unstable-yellowgreen.svg)](https://github.com/dominictarr/stability#unstable) [![Build Status](https://img.shields.io/travis/DamonOehlman/freeice.svg?branch=master)](https://travis-ci.org/DamonOehlman/freeice) 
 
 ## Example Use
 
@@ -41,7 +41,7 @@ quickconnect('http://rtc.io/switchboard', qcOpts)
 
 As the `freeice` module generates ice servers in a list compliant with the
 WebRTC spec you will be able to use it with raw `RTCPeerConnection`
-constructors and other WebRTC libraries. 
+constructors and other WebRTC libraries.
 
 ## Hey, don't use my STUN/TURN server!
 
