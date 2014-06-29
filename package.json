@@ -11,6 +11,7 @@
     "type": "git",
     "url": "https://github.com/DamonOehlman/freeice.git"
   },
+  "stability": "unstable",
   "keywords": [
     "webrtc",
     "ice",
