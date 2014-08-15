@@ -92,7 +92,8 @@ exports.stun = [
   // 'stun.turnservers.com:3478',
   'stun.voiparound.com',
   'stun.voipbuster.com',
-  'stun.voipstunt.com'
+  'stun.voipstunt.com',
+  'stun.voxgratia.org'
 ];
 
 // TURN servers
