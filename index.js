@@ -57,9 +57,9 @@ var normalice = require('normalice');
 
 var freeice = module.exports = function(opts) {
   // if a list of servers has been provided, then use it instead of defaults
-  var servers = (opts || {}).servers || {
-    stun: require('./stun.json'),
-    turn: require('./turn.json')
+  var servers = {
+    stun: (opts || {}).stun || require('./stun.json'),
+    turn: (opts || {}).turn || require('./turn.json')
   };
 
   var stunCount = (opts || {}).stun || 2;
