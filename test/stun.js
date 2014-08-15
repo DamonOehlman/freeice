@@ -1,5 +1,5 @@
 var stun = require('stun');
-var servers = require('../servers').stun;
+var servers = require('../stun.json');
 var test = require('tape');
 var MAX_RESPONSE_TIME = 10000;
 var freeice = require('..');
