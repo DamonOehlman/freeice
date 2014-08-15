@@ -73,32 +73,34 @@ for how to add it.
 
 * current as at the time of last `README.md` file generation
 
-```js
-// STUN servers
-exports.stun = [
-  'stun.l.google.com:19302',
-  'stun1.l.google.com:19302',
-  'stun2.l.google.com:19302',
-  'stun3.l.google.com:19302',
-  'stun4.l.google.com:19302',
-  'stun.ekiga.net',
-  'stun.ideasip.com',
-  'stun.iptel.org',
-  'stun.rixtelecom.se',
-  'stun.schlund.de',
-  'stunserver.org',
-  // 'stun.softjoys.com',
-  'stun.stunprotocol.org:3478',
-  // 'stun.turnservers.com:3478',
-  'stun.voiparound.com',
-  'stun.voipbuster.com',
-  'stun.voipstunt.com',
-  'stun.voxgratia.org'
-];
+### STUN
 
-// TURN servers
-exports.turn = [
-];
+```json
+[
+  "stun.l.google.com:19302",
+  "stun1.l.google.com:19302",
+  "stun2.l.google.com:19302",
+  "stun3.l.google.com:19302",
+  "stun4.l.google.com:19302",
+  "stun.ekiga.net",
+  "stun.ideasip.com",
+  "stun.iptel.org",
+  "stun.rixtelecom.se",
+  "stun.schlund.de",
+  "stunserver.org",
+  "stun.stunprotocol.org:3478",
+  "stun.voiparound.com",
+  "stun.voipbuster.com",
+  "stun.voipstunt.com",
+  "stun.voxgratia.org"
+]
+
+```
+
+### TURN
+
+```json
+[]
 
 ```
 

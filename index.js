@@ -51,7 +51,13 @@ var normalice = require('normalice');
 
   * current as at the time of last `README.md` file generation
 
-  <<< servers.js
+  ### STUN
+
+  <<< stun.json
+
+  ### TURN
+
+  <<< turn.json
 
 **/
 
