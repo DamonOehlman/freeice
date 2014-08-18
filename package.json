@@ -1,6 +1,6 @@
 {
   "name": "freeice",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "Get free, randomized STUN and TURN servers for your WebRTC application",
   "main": "index.js",
   "scripts": {
