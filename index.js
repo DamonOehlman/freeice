@@ -68,8 +68,8 @@ var freeice = module.exports = function(opts) {
     turn: (opts || {}).turn || require('./turn.json')
   };
 
-  var stunCount = (opts || {}).stun || 2;
-  var turnCount = (opts || {}).turn || 0;
+  var stunCount = (opts || {}).stunCount || 2;
+  var turnCount = (opts || {}).turnCount || 0;
   var selected;
 
   function getServers(type, count) {
