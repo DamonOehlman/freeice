@@ -27,7 +27,7 @@
   "devDependencies": {
     "rtc-quickconnect": "^1",
     "stun": "0.0.2",
-    "tape": "^2.12.3"
+    "tape": "^3.0.0"
   },
   "dependencies": {
     "normalice": "^1.0.0"
