@@ -24,7 +24,9 @@ var normalice = require('normalice');
   ## Hey, don't use my STUN/TURN server!
 
   If for some reason your free STUN or TURN server ends up in the
-  list of servers ([stun](stun.js) or [turn](turn.js)) that is used in this module, you can feel
+  list of servers ([stun](https://github.com/DamonOehlman/freeice/blob/master/stun.json) or
+  [turn](https://github.com/DamonOehlman/freeice/blob/master/turn.json))
+  that is used in this module, you can feel
   free to open an issue on this repository and those servers will be removed
   within 24 hours (or sooner).  This is the quickest and probably the most
   polite way to have something removed (and provides us some visibility
