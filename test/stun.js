@@ -1,8 +1,16 @@
-var stun = require('stun');
-var servers = require('../stun.json');
-var test = require('tape');
-var MAX_RESPONSE_TIME = 10000;
-var freeice = require('..');
+const stun = require('stun');
+const {
+  STUN_BINDING_REQUEST,
+  STUN_ALLOCATE_REQUEST,
+  STUN_ATTR_MAPPED_ADDRESS,
+  STUN_ATTR_XOR_MAPPED_ADDRESS,
+  RESPONSE_S,
+  MAPPED_ADDRESS
+} = stun.constants;
+const servers = require('../stun.json');
+const test = require('tape');
+const MAX_RESPONSE_TIME = 10000;
+const freeice = require('..');
 
 test('by default 2 stun servers are returned', function(t) {
   var iceServers;
@@ -13,54 +21,41 @@ test('by default 2 stun servers are returned', function(t) {
   t.equal(iceServers.length, 2, 'we have 2 servers');
 });
 
-servers.forEach(function(url) {
-  test('can connect to ' + url, function(t) {
-    var parts = url.split(':');
-    var host = parts[0];
-    var port = parts[1] ? parseInt(parts[1], 10) : 3478;
-    var method = stun.method.RESPONSE_S;
-    var attr   = stun.attribute.MAPPED_ADDRESS;
-    var client;
+servers.forEach(url => {
+  test(`can connect to ${url}`, t => {
+    const parts = url.split(':');
+    const host = parts[0];
+    const port = parts[1] ? parseInt(parts[1], 10) : 3478;
+    const server = stun.createServer();
 
-    function handleResponse(packet) {
-      t.equal(packet.class, 1);
-      t.equal(packet.method, method);
+    const responseTimer = setTimeout(function() {
+      server.removeAllListeners('bindingResponse');
+      server.removeAllListeners('error');
+      server.close();
 
-      // if we have a xor mapped address, then accept it as ok
-      if (packet.attrs[stun.attribute.XOR_MAPPED_ADDRESS]) {
-        t.pass('got XOR_MAPPED_ADDRESS in response, not attempting to decode');
-        t.pass('skipping port test');
-        t.pass('skipping address test');
-      }
-      else {
-        t.equal(packet.attrs[attr].family, 4);
-        t.notEqual(packet.attrs[attr].port, null);
-        t.notEqual(packet.attrs[attr].address, null);
-      }
-
-
-      // close the client
-      client.close();
-
-      // reset the response timer
-      clearTimeout(responseTimer);
-    }
-
-    t.plan(5);
-    console.log('attempting to connect to host: ' + host + ', port: ' + port);
-    client = stun.connect(port, host);
-    client.once('response', handleResponse);
-
-    responseTimer = setTimeout(function() {
-      client.removeListener('response', handleResponse);
-      client.removeAllListeners('error');
-      client.close();
-
-      t.fail('server did not respond within ' + MAX_RESPONSE_TIME + 'ms');
+      t.fail(`server did not respond within ${MAX_RESPONSE_TIME}ms`);
       t.end();
     }, MAX_RESPONSE_TIME);
 
-    client.on('error', t.ifError.bind(t));
-    client.request();
+    server.on('error', t.ifError.bind(t));
+    server.once('bindingResponse', stunMsg => {
+      const mapped = stunMsg.getAttribute(STUN_ATTR_MAPPED_ADDRESS)
+        || stunMsg.getAttribute(STUN_ATTR_XOR_MAPPED_ADDRESS);
+      clearTimeout(responseTimer);
+      server.close();
+
+      if (mapped) {
+        t.equal(mapped.value.family, 'IPv4');
+        t.notEqual(mapped.value.port, null);
+        t.notEqual(mapped.value.address, null);
+      } else {
+        t.fail('No valid response found');
+      }
+    });
+
+    const request = stun.createMessage(STUN_BINDING_REQUEST);
+    console.log('attempting to connect to host: ' + host + ', port: ' + port);
+    t.plan(3);
+    server.send(request, port, host);
   });
 });
