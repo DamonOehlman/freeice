@@ -63,7 +63,7 @@ var normalice = require('normalice');
 
 **/
 
-var freeice = module.exports = function(opts) {
+var freeice = function(opts) {
   // if a list of servers has been provided, then use it instead of defaults
   var servers = {
     stun: (opts || {}).stun || require('./stun.json'),
@@ -103,3 +103,5 @@ var freeice = module.exports = function(opts) {
 
   return selected;
 };
+
+module.exports = freeice;
