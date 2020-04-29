@@ -23,26 +23,14 @@ test('by default 2 stun servers are returned', function(t) {
 
 servers.forEach(url => {
   test(`can connect to ${url}`, t => {
-    const parts = url.split(':');
-    const host = parts[0];
-    const port = parts[1] ? parseInt(parts[1], 10) : 3478;
-    const server = stun.createServer();
+    t.plan(3);
+    stun.request(url, { timeout: MAX_RESPONSE_TIME }, (err, stunMsg) => {
+      if (err) {
+        return t.fail(err);
+      }
 
-    const responseTimer = setTimeout(function() {
-      server.removeAllListeners('bindingResponse');
-      server.removeAllListeners('error');
-      server.close();
-
-      t.fail(`server did not respond within ${MAX_RESPONSE_TIME}ms`);
-      t.end();
-    }, MAX_RESPONSE_TIME);
-
-    server.on('error', t.ifError.bind(t));
-    server.once('bindingResponse', stunMsg => {
       const mapped = stunMsg.getAttribute(STUN_ATTR_MAPPED_ADDRESS)
         || stunMsg.getAttribute(STUN_ATTR_XOR_MAPPED_ADDRESS);
-      clearTimeout(responseTimer);
-      server.close();
 
       if (mapped) {
         t.equal(mapped.value.family, 'IPv4');
@@ -52,10 +40,5 @@ servers.forEach(url => {
         t.fail('No valid response found');
       }
     });
-
-    const request = stun.createMessage(STUN_BINDING_REQUEST);
-    console.log('attempting to connect to host: ' + host + ', port: ' + port);
-    t.plan(3);
-    server.send(request, port, host);
   });
 });
