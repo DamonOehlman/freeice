@@ -1,8 +1,8 @@
-var freeice = require('..');
-var quickconnect = require('rtc-quickconnect');
+const freeice = require('..');
+const quickconnect = require('rtc-quickconnect');
 
 // initialise a configuration for one stun server
-var qcOpts = {
+const qcOpts = {
   room: 'icetest',
   iceServers: freeice()
 };

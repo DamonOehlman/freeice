@@ -1,4 +1,4 @@
-var freeice = require('./');
+const freeice = require('../');
 
 // return 2 stun servers (default behaviour)
 console.log(freeice());
