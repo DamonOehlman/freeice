@@ -41,7 +41,7 @@ As the `freeice` module generates ice servers in a list compliant with the
 WebRTC spec you will be able to use it with raw `RTCPeerConnection`
 constructors and other WebRTC libraries.
 
-## Hey, don't use my STUN/TURN server  !
+## Hey, don't use my STUN/TURN server!
 
 If for some reason your free STUN or TURN server ends up in the
 list of servers ([stun](https://github.com/DamonOehlman/freeice/blob/master/stun.json) or
@@ -52,7 +52,7 @@ within 24 hours (or sooner).  This is the quickest and probably the most
 polite way to have something removed (and provides us some visibility
 if someone opens a pull request requesting that a server is added).
 
-## Please add my server  !
+## Please add my server!
 
 If you have a server that you wish to add to the list, that's awesome! I'm
 sure I speak on behalf of a whole pile of WebRTC developers who say thanks.

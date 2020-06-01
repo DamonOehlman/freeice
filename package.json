@@ -25,7 +25,7 @@
   },
   "homepage": "https://github.com/DamonOehlman/freeice",
   "devDependencies": {
-    "embellish-readme": "^1.5.2",
+    "embellish-readme": "^1.6.0",
     "rtc-quickconnect": "^5.8.4",
     "stun": "^2.1.0",
     "tape": "^5.0.0"
