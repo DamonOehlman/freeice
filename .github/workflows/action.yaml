@@ -6,7 +6,8 @@ jobs:
     strategy:
       matrix:
         node: [ 14, 16, 18 ]
-    name: Node ${{ matrix.node }} sample
+
+    name: Node ${{ matrix.node }}
     steps:
       - uses: actions/checkout@v3
       - name: Setup node
