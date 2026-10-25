@@ -1,6 +1,8 @@
 //! Turning probes into a table, a diversity summary and JSON.
 
+use crate::availability::Eligible;
 use crate::cli::{Families, Options};
+use crate::clock;
 use crate::dns::{self, Lookup, Rcode};
 use crate::json;
 use crate::list::Entry;
@@ -9,12 +11,15 @@ use crate::stun::Kind;
 use crate::targets::{self, Target};
 use std::collections::BTreeMap;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 /// Probing every address a large operator publishes would cost more time than
 /// the answer is worth; four per entry is enough to separate "alive" from "one
 /// address filtered".
 const MAX_ADDRESSES: usize = 4;
+
+/// Bounds the threads a large candidates file can start.
+const MAX_CONCURRENCY: usize = 24;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Family {
@@ -65,18 +70,25 @@ pub fn check_all(
     attempts: u32,
     families: Families,
 ) -> Vec<EntryResult> {
-    std::thread::scope(|scope| {
-        let handles: Vec<_> = entries
-            .iter()
-            .map(|entry| {
-                scope.spawn(move || check_entry(entry, servers, timeout, attempts, families))
-            })
-            .collect();
-        handles
-            .into_iter()
-            .map(|handle| handle.join().expect("probe thread panicked"))
-            .collect()
-    })
+    let mut results = Vec::with_capacity(entries.len());
+
+    // A candidates file can carry hundreds of hosts; probing all of them at
+    // once would be rude to the network and to this machine.
+    for chunk in entries.chunks(MAX_CONCURRENCY) {
+        std::thread::scope(|scope| {
+            let handles: Vec<_> = chunk
+                .iter()
+                .map(|entry| {
+                    scope.spawn(move || check_entry(entry, servers, timeout, attempts, families))
+                })
+                .collect();
+            for handle in handles {
+                results.push(handle.join().expect("probe thread panicked"));
+            }
+        });
+    }
+
+    results
 }
 
 fn check_entry(
@@ -296,11 +308,62 @@ fn target_table(results: &[TargetResult], options: &Options) {
     }
 }
 
+pub fn print_eligible(eligible: &[Eligible], options: &Options) {
+    println!(
+        "PROMOTION (>={:.0}% over {} days, >={} checks, already-shipped excluded)",
+        options.threshold * 100.0,
+        options.window_days,
+        options.min_checks
+    );
+    println!();
+
+    if eligible.is_empty() {
+        println!("no candidate met the threshold");
+        println!();
+        return;
+    }
+
+    println!(
+        "{:<38} {:>6} {:>5} {:>7} {:>9}  last address",
+        "entry", "checks", "ok", "ratio", "avg rtt"
+    );
+    println!("{}", "-".repeat(92));
+    for item in eligible.iter().take(40) {
+        println!(
+            "{:<38} {:>6} {:>5} {:>6.1}% {:>6.0} ms  {}",
+            item.entry,
+            item.checked,
+            item.answered,
+            item.ratio * 100.0,
+            item.rtt_ms,
+            item.address.as_deref().unwrap_or("-")
+        );
+    }
+    if eligible.len() > 40 {
+        println!("... and {} more", eligible.len() - 40);
+    }
+    println!();
+
+    let mut addresses: Vec<&str> = eligible
+        .iter()
+        .filter_map(|item| item.address.as_deref())
+        .collect();
+    addresses.sort_unstable();
+    addresses.dedup();
+    println!(
+        "{} eligible, {} distinct addresses",
+        eligible.len(),
+        addresses.len()
+    );
+    println!();
+}
+
 pub fn print(
     results: &[EntryResult],
     candidates: &[EntryResult],
     targets: &[TargetResult],
     options: &Options,
+    skipped_candidates: usize,
 ) {
     if !options.quiet {
         println!("checking against {}", options.root.display());
@@ -316,12 +379,25 @@ pub fn print(
     }
 
     if !candidates.is_empty() {
-        table(
-            "CANDIDATES (not endorsed -- check the operator's terms)",
-            candidates,
-            options.families,
-        );
+        // A candidates file can carry hundreds of entries; the counts and the
+        // JSON are the useful part, and nobody reads 251 rows in a job summary.
+        if candidates.len() > 40 {
+            println!(
+                "CANDIDATES ({} checked; table omitted, see --json)",
+                candidates.len()
+            );
+            println!();
+        } else {
+            table(
+                "CANDIDATES (not endorsed -- check the operator's terms)",
+                candidates,
+                options.families,
+            );
+        }
         if !options.quiet {
+            if skipped_candidates > 0 {
+                println!("{skipped_candidates} candidates already shipped, not probed");
+            }
             summary(candidates, options.families);
         }
     }
@@ -522,7 +598,11 @@ fn summarise(results: &[EntryResult], families: Families) -> Diversity {
             failed.push((result.entry.clone(), reason));
         }
 
-        if !result.lookup.is_empty() && result.lookup.aaaa.is_empty() {
+        if result.lookup.a_answered
+            && result.lookup.aaaa_answered
+            && !result.lookup.is_empty()
+            && result.lookup.aaaa.is_empty()
+        {
             no_aaaa.push(result.entry.clone());
         }
     }
@@ -552,8 +632,11 @@ fn summary(results: &[EntryResult], families: Families) {
         diversity.answered,
         diversity.failed.len()
     );
-    for (entry, reason) in &diversity.failed {
+    for (entry, reason) in diversity.failed.iter().take(12) {
         println!("  FAILED  {entry}: {reason}");
+    }
+    if diversity.failed.len() > 12 {
+        println!("  ... and {} more", diversity.failed.len() - 12);
     }
 
     println!(
@@ -565,7 +648,20 @@ fn summary(results: &[EntryResult], families: Families) {
         diversity.v6
     );
     if !diversity.no_aaaa.is_empty() {
-        println!("  no AAAA: {}", diversity.no_aaaa.join(", "));
+        let shown: Vec<&str> = diversity
+            .no_aaaa
+            .iter()
+            .take(8)
+            .map(String::as_str)
+            .collect();
+        let mut line = shown.join(", ");
+        if diversity.no_aaaa.len() > shown.len() {
+            line.push_str(&format!(
+                " (+{} more)",
+                diversity.no_aaaa.len() - shown.len()
+            ));
+        }
+        println!("  no AAAA: {line}");
     }
     if diversity.unreachable_v6 > 0 {
         println!(
@@ -573,12 +669,18 @@ fn summary(results: &[EntryResult], families: Families) {
             diversity.unreachable_v6
         );
     }
-    for group in &diversity.shared {
-        println!(
-            "  same addresses: {} ({} entries)",
-            group.join(", "),
-            group.len()
-        );
+    let mut groups = diversity.shared.clone();
+    groups.sort_by_key(|left| std::cmp::Reverse(left.len()));
+    for group in groups.iter().take(8) {
+        let names = if group.len() > 8 {
+            format!("{}, ... (+{} more)", group[..8].join(", "), group.len() - 8)
+        } else {
+            group.join(", ")
+        };
+        println!("  same addresses: {names} ({} entries)", group.len());
+    }
+    if groups.len() > 8 {
+        println!("  ... and {} more address-sharing groups", groups.len() - 8);
     }
     println!();
 }
@@ -852,47 +954,7 @@ pub fn suggest(results: &[EntryResult]) -> String {
 }
 
 fn generated_at() -> String {
-    let seconds = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_secs())
-        .unwrap_or(0);
-    rfc3339(seconds)
-}
-
-fn rfc3339(seconds: u64) -> String {
-    let days = (seconds / 86_400) as i64;
-    let remainder = seconds % 86_400;
-    let (year, month, day) = civil_from_days(days);
-    format!(
-        "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}Z",
-        remainder / 3600,
-        (remainder % 3600) / 60,
-        remainder % 60
-    )
-}
-
-/// Howard Hinnant's days-to-civil algorithm, so the report carries a date
-/// without a date crate.
-fn civil_from_days(days: i64) -> (i64, u32, u32) {
-    let shifted = days + 719_468;
-    let era = if shifted >= 0 {
-        shifted
-    } else {
-        shifted - 146_096
-    } / 146_097;
-    let day_of_era = (shifted - era * 146_097) as u64;
-    let year_of_era =
-        (day_of_era - day_of_era / 1460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
-    let year = year_of_era as i64 + era * 400;
-    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
-    let month_position = (5 * day_of_year + 2) / 153;
-    let day = (day_of_year - (153 * month_position + 2) / 5 + 1) as u32;
-    let month = if month_position < 10 {
-        month_position + 3
-    } else {
-        month_position - 9
-    } as u32;
-    (if month <= 2 { year + 1 } else { year }, month, day)
+    clock::now()
 }
 
 fn bogon_label(address: IpAddr) -> Option<&'static str> {
@@ -951,13 +1013,6 @@ fn bogon_label(address: IpAddr) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn formats_a_timestamp_without_a_date_crate() {
-        assert_eq!(rfc3339(0), "1970-01-01T00:00:00Z");
-        assert_eq!(rfc3339(1_700_000_000), "2023-11-14T22:13:20Z");
-        assert_eq!(rfc3339(1_767_225_600), "2026-01-01T00:00:00Z");
-    }
 
     #[test]
     fn spots_documentation_and_private_addresses() {

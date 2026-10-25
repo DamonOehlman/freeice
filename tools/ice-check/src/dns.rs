@@ -87,6 +87,10 @@ pub struct Lookup {
     pub rcode: Option<Rcode>,
     pub source: Source,
     pub note: Option<String>,
+    /// Whether the corresponding query was actually answered. Without this,
+    /// "no AAAA" and "could not ask for AAAA" become the same claim.
+    pub a_answered: bool,
+    pub aaaa_answered: bool,
 }
 
 impl Default for Lookup {
@@ -98,6 +102,8 @@ impl Default for Lookup {
             rcode: None,
             source: Source::System,
             note: None,
+            a_answered: false,
+            aaaa_answered: false,
         }
     }
 }
@@ -122,8 +128,14 @@ pub fn lookup(host: &str, servers: &[SocketAddr], timeout: Duration) -> Lookup {
             ..Lookup::default()
         };
         match address {
-            IpAddr::V4(address) => answer.a.push(address),
-            IpAddr::V6(address) => answer.aaaa.push(address),
+            IpAddr::V4(address) => {
+                answer.a.push(address);
+                answer.a_answered = true;
+            }
+            IpAddr::V6(address) => {
+                answer.aaaa.push(address);
+                answer.aaaa_answered = true;
+            }
         }
         return answer;
     }
@@ -147,7 +159,15 @@ pub fn lookup(host: &str, servers: &[SocketAddr], timeout: Duration) -> Lookup {
                 answer.a.extend(response.a);
                 answer.aaaa.extend(response.aaaa);
                 answer.cnames.extend(response.cnames);
+                if query_type == TYPE_A {
+                    answer.a_answered = true;
+                } else {
+                    answer.aaaa_answered = true;
+                }
                 if response.rcode == Some(Rcode::NameError) {
+                    // NXDOMAIN answers for every type at once.
+                    answer.a_answered = true;
+                    answer.aaaa_answered = true;
                     break;
                 }
             }
@@ -155,7 +175,9 @@ pub fn lookup(host: &str, servers: &[SocketAddr], timeout: Duration) -> Lookup {
         }
     }
 
-    if answer.is_empty() && answer.cnames.is_empty() && failures.len() == 2 {
+    // A transport failure on A leaves us unable to say whether the host has an
+    // address at all; the system resolver is a better answer than "no address".
+    if answer.a.is_empty() && !answer.a_answered {
         return system_lookup(host, &failures.join("; "));
     }
     if !failures.is_empty() {
@@ -203,6 +225,10 @@ fn system_lookup(host: &str, note: &str) -> Lookup {
     let mut answer = Lookup {
         source: Source::System,
         note: Some(note.to_string()),
+        a_answered: true,
+        // The system resolver only reports the families this host can use, so
+        // an absent AAAA here says nothing about the operator.
+        aaaa_answered: false,
         ..Lookup::default()
     };
     match (host, 3478u16).to_socket_addrs() {

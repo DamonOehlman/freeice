@@ -12,6 +12,15 @@ Options:
   --root <dir>      checkout holding stun.json and turn.json
                     (default: search upward from the working directory)
   --candidates      also probe the candidate list in src/candidates.rs
+  --candidates-file <path>
+                    also probe the servers in <path>, one host:port per line
+                    (for example always-online-stun's valid_hosts.txt)
+  --record <path>   add this run's candidate results to an availability ledger
+  --availability <path>
+                    print candidates that passed the availability threshold
+  --threshold <pct> percentage of checks that must answer (default 95)
+  --min-checks <n>  checks required inside the window (default 20)
+  --window-days <n> days of history to consider (default 7)
   --base <dir>      only probe entries added since the lists in <dir>, for a
                     pull request that proposes a server
   --turn-targets <path>
@@ -44,6 +53,12 @@ pub struct Options {
     pub turn_targets: Option<PathBuf>,
     pub env_file: Option<PathBuf>,
     pub candidates: bool,
+    pub candidates_file: Option<PathBuf>,
+    pub record: Option<PathBuf>,
+    pub availability: Option<PathBuf>,
+    pub threshold: f64,
+    pub min_checks: u32,
+    pub window_days: usize,
     pub json: Option<PathBuf>,
     pub suggest: bool,
     pub timeout: Duration,
@@ -53,7 +68,7 @@ pub struct Options {
 }
 
 pub enum Command {
-    Run(Options),
+    Run(Box<Options>),
     Help,
     Version,
 }
@@ -69,6 +84,12 @@ where
         turn_targets: None,
         env_file: None,
         candidates: false,
+        candidates_file: None,
+        record: None,
+        availability: None,
+        threshold: 0.95,
+        min_checks: 20,
+        window_days: 7,
         json: None,
         suggest: false,
         timeout: Duration::from_millis(750),
@@ -85,6 +106,44 @@ where
                 root_given = true;
             }
             "--candidates" => options.candidates = true,
+            "--candidates-file" => {
+                options.candidates_file =
+                    Some(PathBuf::from(value(&mut args, "--candidates-file")?))
+            }
+            "--record" => options.record = Some(PathBuf::from(value(&mut args, "--record")?)),
+            "--availability" => {
+                options.availability = Some(PathBuf::from(value(&mut args, "--availability")?))
+            }
+            "--threshold" => {
+                let text = value(&mut args, "--threshold")?;
+                let percent: f64 = text
+                    .parse()
+                    .map_err(|_| format!("{text} is not a percentage"))?;
+                if !(0.0..=100.0).contains(&percent) {
+                    return Err("--threshold takes a percentage between 0 and 100".to_string());
+                }
+                options.threshold = percent / 100.0;
+            }
+            "--min-checks" => {
+                let text = value(&mut args, "--min-checks")?;
+                let checks: u32 = text
+                    .parse()
+                    .map_err(|_| format!("{text} is not a number of checks"))?;
+                if checks == 0 {
+                    return Err("--min-checks must be at least 1".to_string());
+                }
+                options.min_checks = checks;
+            }
+            "--window-days" => {
+                let text = value(&mut args, "--window-days")?;
+                let days: usize = text
+                    .parse()
+                    .map_err(|_| format!("{text} is not a number of days"))?;
+                if days == 0 {
+                    return Err("--window-days must be at least 1".to_string());
+                }
+                options.window_days = days;
+            }
             "--base" => options.base = Some(PathBuf::from(value(&mut args, "--base")?)),
             "--turn-targets" => {
                 options.turn_targets = Some(PathBuf::from(value(&mut args, "--turn-targets")?))
@@ -137,7 +196,7 @@ where
         options.root = discover_root()?;
     }
 
-    Ok(Command::Run(options))
+    Ok(Command::Run(Box::new(options)))
 }
 
 fn value<I>(args: &mut I, name: &str) -> Result<String, String>

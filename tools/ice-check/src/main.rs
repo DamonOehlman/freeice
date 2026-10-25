@@ -9,8 +9,10 @@
 //! MESSAGE-INTEGRITY is defined in terms of, and nothing else: no async
 //! runtime, no HTTP client, no CLI or JSON crate.
 
+mod availability;
 mod candidates;
 mod cli;
+mod clock;
 mod dns;
 mod json;
 mod list;
@@ -36,7 +38,7 @@ fn main() -> ExitCode {
             println!("ice-check {}", env!("CARGO_PKG_VERSION"));
             ExitCode::SUCCESS
         }
-        Ok(cli::Command::Run(options)) => run(options),
+        Ok(cli::Command::Run(options)) => run(*options),
     }
 }
 
@@ -54,6 +56,11 @@ fn run(options: cli::Options) -> ExitCode {
             }
         }
     }
+
+    let shipped: HashSet<(String, u16)> = entries
+        .iter()
+        .map(|entry| (entry.host.clone(), entry.port))
+        .collect();
 
     if let Some(base) = &options.base {
         let mut known: HashSet<String> = HashSet::new();
@@ -83,7 +90,7 @@ fn run(options: cli::Options) -> ExitCode {
         return ExitCode::from(2);
     }
 
-    let candidate_entries: Vec<list::Entry> = if options.candidates {
+    let mut candidate_entries: Vec<list::Entry> = if options.candidates {
         candidates::CANDIDATES
             .iter()
             .filter_map(
@@ -99,6 +106,20 @@ fn run(options: cli::Options) -> ExitCode {
     } else {
         Vec::new()
     };
+
+    if let Some(path) = &options.candidates_file {
+        match list::load_text(path, stun::Kind::Binding) {
+            Ok(mut loaded) => candidate_entries.append(&mut loaded),
+            Err(error) => {
+                eprintln!("ice-check: {error}");
+                return ExitCode::from(2);
+            }
+        }
+    }
+
+    let offered = candidate_entries.len();
+    candidate_entries.retain(|entry| !shipped.contains(&(entry.host.clone(), entry.port)));
+    let skipped_candidates = offered - candidate_entries.len();
 
     let servers = dns::servers();
     let results = report::check_all(
@@ -148,7 +169,55 @@ fn run(options: cli::Options) -> ExitCode {
         options.families,
     );
 
-    report::print(&results, &candidate_results, &target_results, &options);
+    if let Some(path) = &options.record {
+        let samples: Vec<availability::Sample> = candidate_results
+            .iter()
+            .map(|result| availability::Sample {
+                entry: result.entry.clone(),
+                answered: result.answered(),
+                rtt_ms: result
+                    .addresses
+                    .iter()
+                    .find_map(|address| address.outcome.rtt_ms()),
+                address: result
+                    .addresses
+                    .iter()
+                    .find_map(|address| match &address.outcome {
+                        probe::Outcome::Ok { .. } | probe::Outcome::Relayed { .. } => {
+                            Some(address.address.to_string())
+                        }
+                        _ => None,
+                    }),
+            })
+            .collect();
+
+        let mut ledger = match availability::load(path) {
+            Ok(ledger) => ledger,
+            Err(error) => {
+                eprintln!("ice-check: {error}");
+                return ExitCode::from(2);
+            }
+        };
+        let now = clock::now();
+        ledger.record(&now[..10], &now, &samples);
+        ledger.prune(options.window_days * 2);
+        if let Err(error) = std::fs::write(path, ledger.to_json(&now)) {
+            eprintln!("ice-check: cannot write {}: {error}", path.display());
+            return ExitCode::from(2);
+        }
+        if !options.quiet {
+            println!("recorded {} samples in {}", samples.len(), path.display());
+            println!();
+        }
+    }
+
+    report::print(
+        &results,
+        &candidate_results,
+        &target_results,
+        &options,
+        skipped_candidates,
+    );
 
     if let Some(path) = &options.json {
         let document = report::to_json(
@@ -168,6 +237,23 @@ fn run(options: cli::Options) -> ExitCode {
 
     if options.suggest {
         print!("{}", report::suggest(&results));
+    }
+
+    if let Some(path) = &options.availability {
+        let ledger = match availability::load(path) {
+            Ok(ledger) => ledger,
+            Err(error) => {
+                eprintln!("ice-check: {error}");
+                return ExitCode::from(2);
+            }
+        };
+        let eligible = ledger.eligible(
+            options.window_days,
+            options.threshold,
+            options.min_checks,
+            &shipped,
+        );
+        report::print_eligible(&eligible, &options);
     }
 
     let lists_failed = results.iter().any(|result| !result.answered());

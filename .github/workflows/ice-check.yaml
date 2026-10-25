@@ -2,8 +2,9 @@ name: ice-check
 
 on:
   schedule:
-    # Mondays, 03:17 UTC. A list of free servers rots without a runner.
-    - cron: "17 3 * * 1"
+    # Every six hours: four checks a day, 28 in the week the promotion window
+    # looks at. A list of free servers rots without a runner.
+    - cron: "17 */6 * * *"
   workflow_dispatch:
   push:
     paths:
@@ -26,8 +27,21 @@ jobs:
   lists:
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
+    # One ledger writer at a time: two runs restoring the same state would lose
+    # one of the samples.
+    concurrency:
+      group: ice-check-lists
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
+
+      - name: Restore the availability ledger
+        uses: actions/cache/restore@v4
+        with:
+          path: .tmp/availability.json
+          key: ice-availability-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            ice-availability-
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -59,14 +73,42 @@ jobs:
           echo "TURN_CF_USERNAME=$username" >> "$GITHUB_ENV"
           echo "TURN_CF_CREDENTIAL=$credential" >> "$GITHUB_ENV"
 
+      - name: Fetch the always-online-stun candidates
+        run: |
+          mkdir -p .tmp
+          if curl -sS --fail --max-time 30 -o .tmp/always-online.txt \
+              https://raw.githubusercontent.com/pradt2/always-online-stun/master/valid_hosts.txt; then
+            echo "fetched $(wc -l < .tmp/always-online.txt) candidates"
+          else
+            rm -f .tmp/always-online.txt
+            echo "could not fetch the candidate list; continuing without it"
+          fi
+
       - name: Probe the server lists
         run: |
           set -o pipefail
+          extra=""
+          if [ -s .tmp/always-online.txt ]; then
+            extra="--candidates-file .tmp/always-online.txt"
+          fi
+          status=0
           cargo run --quiet --manifest-path tools/ice-check/Cargo.toml -- \
+            $extra \
+            --record .tmp/availability.json \
+            --availability .tmp/availability.json \
+            --threshold 90 --min-checks 20 \
             --turn-targets tools/ice-check/turn-targets.json \
-            --json ice-check.json | tee report.txt
+            --json ice-check.json | tee report.txt || status=$?
           printf '\n' >> "$GITHUB_STEP_SUMMARY"
           cat report.txt >> "$GITHUB_STEP_SUMMARY"
+          exit $status
+
+      - name: Save the availability ledger
+        if: always() && hashFiles('.tmp/availability.json') != ''
+        uses: actions/cache/save@v4
+        with:
+          path: .tmp/availability.json
+          key: ice-availability-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Upload the report
         if: always()
@@ -76,6 +118,7 @@ jobs:
           path: |
             ice-check.json
             report.txt
+            .tmp/availability.json
 
   # Only what the pull request adds, so a proposal is judged on its own server.
   proposed-servers:

@@ -62,6 +62,24 @@ pub fn load_optional(root: &Path, file: &str, default_kind: Kind) -> Result<Vec<
     load(root, file, default_kind)
 }
 
+/// A plain list of `host:port` lines, one per line, as published by the
+/// always-online-stun project. Blank lines and `#` comments are ignored.
+pub fn load_text(path: &Path, default_kind: Kind) -> Result<Vec<Entry>, String> {
+    let text = std::fs::read_to_string(path)
+        .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
+    let mut entries = Vec::new();
+    for (number, line) in text.lines().enumerate() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let entry = parse_entry(default_kind, line, false)
+            .map_err(|error| format!("{}:{}: {error}", path.display(), number + 1))?;
+        entries.push(entry);
+    }
+    Ok(entries)
+}
+
 pub fn parse_entry(default_kind: Kind, raw: &str, credentialed: bool) -> Result<Entry, String> {
     let raw = raw.trim();
     let (kind, rest) = if let Some(rest) = raw.strip_prefix("turn:") {
