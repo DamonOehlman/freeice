@@ -1,0 +1,87 @@
+name: ice-check
+
+on:
+  schedule:
+    # Mondays, 03:17 UTC. A list of free servers rots without a runner.
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+  push:
+    paths:
+      - "stun.json"
+      - "turn.json"
+      - "tools/ice-check/**"
+      - ".github/workflows/ice-check.yaml"
+  pull_request:
+    paths:
+      - "stun.json"
+      - "turn.json"
+      - "tools/ice-check/**"
+      - ".github/workflows/ice-check.yaml"
+
+permissions:
+  contents: read
+
+jobs:
+  # Every server, on a schedule and on a change to the tooling.
+  lists:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Test the checker
+        run: cargo test --manifest-path tools/ice-check/Cargo.toml
+
+      - name: Probe the server lists
+        run: |
+          set -o pipefail
+          cargo run --quiet --manifest-path tools/ice-check/Cargo.toml -- --json ice-check.json | tee report.txt
+          printf '\n' >> "$GITHUB_STEP_SUMMARY"
+          cat report.txt >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ice-check
+          path: |
+            ice-check.json
+            report.txt
+
+  # Only what the pull request adds, so a proposal is judged on its own server.
+  proposed-servers:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Test the checker
+        run: cargo test --manifest-path tools/ice-check/Cargo.toml
+
+      - name: Snapshot the base lists
+        run: |
+          mkdir -p .tmp/base
+          git show "origin/${{ github.base_ref }}:stun.json" > .tmp/base/stun.json 2>/dev/null || echo '[]' > .tmp/base/stun.json
+          git show "origin/${{ github.base_ref }}:turn.json" > .tmp/base/turn.json 2>/dev/null || echo '[]' > .tmp/base/turn.json
+
+      - name: Probe the added servers
+        run: |
+          set -o pipefail
+          cargo run --quiet --manifest-path tools/ice-check/Cargo.toml -- --base .tmp/base --json proposed-servers.json | tee report.txt
+          printf '\n' >> "$GITHUB_STEP_SUMMARY"
+          cat report.txt >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: proposed-servers
+          path: |
+            proposed-servers.json
+            report.txt

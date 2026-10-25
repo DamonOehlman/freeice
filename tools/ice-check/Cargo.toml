@@ -1,0 +1,17 @@
+[package]
+name = "ice-check"
+version = "0.1.0"
+edition = "2021"
+description = "Probe the STUN/TURN servers freeice ships and report what still answers"
+license = "MIT"
+publish = false
+
+[[bin]]
+name = "ice-check"
+path = "src/main.rs"
+
+[dependencies]
+
+[profile.release]
+lto = true
+strip = true
