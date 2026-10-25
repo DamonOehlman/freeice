@@ -6,6 +6,7 @@ use crate::json;
 use crate::list::Entry;
 use crate::probe::{self, Outcome};
 use crate::stun::Kind;
+use crate::targets::{self, Target};
 use std::collections::BTreeMap;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -141,7 +142,166 @@ fn check_entry(
     }
 }
 
-pub fn print(results: &[EntryResult], candidates: &[EntryResult], options: &Options) {
+#[derive(Clone, Debug)]
+pub struct TargetResult {
+    pub name: String,
+    pub url: Option<String>,
+    pub skipped: Option<String>,
+    pub outcome: Option<Outcome>,
+}
+
+impl TargetResult {
+    /// A skipped target is not a failure: a checkout without secrets should
+    /// still run cleanly. An attempted target must relay.
+    pub fn passed(&self) -> bool {
+        if self.skipped.is_some() {
+            return true;
+        }
+        self.outcome.as_ref().map(Outcome::relayed).unwrap_or(false)
+    }
+}
+
+pub fn check_targets(
+    targets: &[Target],
+    env_file: &[(String, String)],
+    servers: &[SocketAddr],
+    timeout: Duration,
+    attempts: u32,
+    families: Families,
+) -> Vec<TargetResult> {
+    let mut results = Vec::new();
+
+    for target in targets {
+        let urls = targets::udp_urls(target);
+        let Some(url) = urls.first().copied() else {
+            results.push(TargetResult {
+                name: target.name.clone(),
+                url: None,
+                skipped: Some("no UDP url".to_string()),
+                outcome: None,
+            });
+            continue;
+        };
+
+        let Some(credentials) = targets::resolve(target, env_file) else {
+            results.push(TargetResult {
+                name: target.name.clone(),
+                url: Some(url.to_string()),
+                skipped: Some(format!(
+                    "{} and {} are not set",
+                    target.username_env, target.credential_env
+                )),
+                outcome: None,
+            });
+            continue;
+        };
+
+        let outcome = probe_target(url, &credentials, servers, timeout, attempts, families);
+        results.push(TargetResult {
+            name: target.name.clone(),
+            url: Some(url.to_string()),
+            skipped: None,
+            outcome: Some(outcome),
+        });
+    }
+
+    results
+}
+
+fn probe_target(
+    url: &str,
+    credentials: &probe::Credentials,
+    servers: &[SocketAddr],
+    timeout: Duration,
+    attempts: u32,
+    families: Families,
+) -> Outcome {
+    let entry = match crate::list::parse_entry(Kind::Allocate, url, true) {
+        Ok(entry) => entry,
+        Err(error) => return Outcome::SendFailed { detail: error },
+    };
+
+    let lookup = dns::lookup(&entry.host, servers, timeout);
+    let mut addresses: Vec<IpAddr> = Vec::new();
+    if families.v4 {
+        addresses.extend(lookup.a.iter().map(|address| IpAddr::V4(*address)));
+    }
+    if families.v6 {
+        addresses.extend(lookup.aaaa.iter().map(|address| IpAddr::V6(*address)));
+    }
+    if addresses.is_empty() {
+        return Outcome::Unreachable {
+            detail: format!("{} did not resolve", entry.host),
+        };
+    }
+
+    let mut best: Option<Outcome> = None;
+    for address in addresses.into_iter().take(2) {
+        let outcome = probe::probe_turn(
+            SocketAddr::new(address, entry.port),
+            timeout,
+            attempts,
+            Some(credentials),
+        );
+        if outcome.relayed() {
+            return outcome;
+        }
+        if best.is_none() {
+            best = Some(outcome);
+        }
+    }
+    best.unwrap_or(Outcome::Timeout { attempts })
+}
+
+fn target_table(results: &[TargetResult], options: &Options) {
+    if results.is_empty() {
+        return;
+    }
+
+    println!("TURN TARGETS (credentials from the environment or --env-file)");
+    println!();
+    println!("{:<14} {:<44} {:<12} detail", "name", "url", "result");
+    println!("{}", "-".repeat(104));
+
+    for result in results {
+        let (status, detail) = match (&result.outcome, &result.skipped) {
+            (_, Some(reason)) => ("skipped".to_string(), reason.clone()),
+            (Some(outcome), None) => {
+                let mut status = outcome.label().to_string();
+                if let Some(rtt) = outcome.rtt_ms() {
+                    status.push_str(&format!(" ({rtt:.0} ms)"));
+                }
+                (status, outcome.detail())
+            }
+            (None, None) => ("not run".to_string(), String::new()),
+        };
+        println!(
+            "{:<14} {:<44} {:<12} {}",
+            result.name,
+            result.url.as_deref().unwrap_or("-"),
+            status,
+            truncate(&detail, 60)
+        );
+    }
+    println!();
+
+    if !options.quiet {
+        let failed = results.iter().filter(|result| !result.passed()).count();
+        if failed == 0 {
+            println!("targets: {} checked, all relayed or skipped", results.len());
+        } else {
+            println!("targets: {failed} of {} failed", results.len());
+        }
+        println!();
+    }
+}
+
+pub fn print(
+    results: &[EntryResult],
+    candidates: &[EntryResult],
+    targets: &[TargetResult],
+    options: &Options,
+) {
     if !options.quiet {
         println!("checking against {}", options.root.display());
         if let Some(base) = &options.base {
@@ -165,6 +325,8 @@ pub fn print(results: &[EntryResult], candidates: &[EntryResult], options: &Opti
             summary(candidates, options.families);
         }
     }
+
+    target_table(targets, options);
 }
 
 fn table(title: &str, results: &[EntryResult], families: Families) {
@@ -424,6 +586,7 @@ fn summary(results: &[EntryResult], families: Families) {
 pub fn to_json(
     results: &[EntryResult],
     candidates: &[EntryResult],
+    targets: &[TargetResult],
     base: Option<&std::path::Path>,
 ) -> String {
     let mut out = String::new();
@@ -443,6 +606,8 @@ pub fn to_json(
     write_entries(&mut out, results);
     out.push_str(",\n  \"candidates\": ");
     write_entries(&mut out, candidates);
+    out.push_str(",\n  \"targets\": ");
+    write_targets(&mut out, targets);
     out.push_str("\n}\n");
     out
 }
@@ -529,84 +694,123 @@ fn write_entry(out: &mut String, result: &EntryResult) {
 }
 
 fn write_address(out: &mut String, address: &AddressResult) {
-    out.push_str("        {\n");
-    field(
-        out,
-        10,
-        "family",
-        &json::quote(address.family.label()),
-        true,
-    );
-    field(
-        out,
-        10,
-        "address",
-        &json::quote(&address.address.to_string()),
-        true,
-    );
-    field(
-        out,
-        10,
-        "outcome",
-        &json::quote(address.outcome.label()),
-        true,
-    );
+    let mut fields = vec![
+        ("family".to_string(), json::quote(address.family.label())),
+        (
+            "address".to_string(),
+            json::quote(&address.address.to_string()),
+        ),
+        ("outcome".to_string(), json::quote(address.outcome.label())),
+    ];
+    fields.extend(outcome_fields(&address.outcome));
+    write_object(out, 8, &fields);
+}
 
-    match &address.outcome {
+fn write_targets(out: &mut String, targets: &[TargetResult]) {
+    if targets.is_empty() {
+        out.push_str("[]");
+        return;
+    }
+    out.push_str("[\n");
+    for (index, target) in targets.iter().enumerate() {
+        write_target(out, target);
+        if index + 1 != targets.len() {
+            out.push(',');
+        }
+        out.push('\n');
+    }
+    out.push_str("  ]");
+}
+
+fn write_target(out: &mut String, target: &TargetResult) {
+    let mut fields = vec![
+        ("name".to_string(), json::quote(&target.name)),
+        (
+            "url".to_string(),
+            target
+                .url
+                .as_ref()
+                .map(|url| json::quote(url))
+                .unwrap_or_else(|| "null".to_string()),
+        ),
+        (
+            "skipped".to_string(),
+            target
+                .skipped
+                .as_ref()
+                .map(|reason| json::quote(reason))
+                .unwrap_or_else(|| "null".to_string()),
+        ),
+    ];
+    if let Some(outcome) = &target.outcome {
+        fields.push(("outcome".to_string(), json::quote(outcome.label())));
+        fields.extend(outcome_fields(outcome));
+    }
+    write_object(out, 4, &fields);
+}
+
+fn outcome_fields(outcome: &Outcome) -> Vec<(String, String)> {
+    let optional = |value: &Option<String>| {
+        value
+            .as_ref()
+            .map(|text| json::quote(text))
+            .unwrap_or_else(|| "null".to_string())
+    };
+
+    let mut fields = Vec::new();
+    match outcome {
         Outcome::Ok {
             mapped, software, ..
         } => {
-            field(
-                out,
-                10,
-                "mapped",
-                &mapped
-                    .as_ref()
-                    .map(|value| json::quote(value))
-                    .unwrap_or_else(|| "null".to_string()),
-                true,
-            );
-            field(
-                out,
-                10,
-                "software",
-                &software
-                    .as_ref()
-                    .map(|value| json::quote(value))
-                    .unwrap_or_else(|| "null".to_string()),
-                true,
-            );
+            fields.push(("mapped".to_string(), optional(mapped)));
+            fields.push(("software".to_string(), optional(software)));
         }
-        Outcome::Error { code, reason, .. } => {
-            field(out, 10, "error_code", &code.to_string(), true);
-            field(out, 10, "reason", &json::quote(reason), true);
+        Outcome::Relayed {
+            relayed, software, ..
+        } => {
+            fields.push(("relayed".to_string(), optional(relayed)));
+            fields.push(("software".to_string(), optional(software)));
+        }
+        Outcome::Error { code, reason, .. } | Outcome::Rejected { code, reason, .. } => {
+            fields.push(("error_code".to_string(), code.to_string()));
+            fields.push(("reason".to_string(), json::quote(reason)));
         }
         Outcome::Timeout { attempts } => {
-            field(out, 10, "attempts", &attempts.to_string(), true);
+            fields.push(("attempts".to_string(), attempts.to_string()));
         }
         Outcome::Garbage { bytes, detail } => {
-            field(out, 10, "bytes", &bytes.to_string(), true);
-            field(out, 10, "detail", &json::quote(detail), true);
+            fields.push(("bytes".to_string(), bytes.to_string()));
+            fields.push(("detail".to_string(), json::quote(detail)));
         }
         Outcome::Unreachable { detail }
         | Outcome::SendFailed { detail }
         | Outcome::Bogon { detail } => {
-            field(out, 10, "detail", &json::quote(detail), true);
+            fields.push(("detail".to_string(), json::quote(detail)));
         }
         Outcome::Refused => {}
     }
 
-    match address.outcome.rtt_ms() {
-        Some(rtt) => field(out, 10, "rtt_ms", &format!("{rtt:.1}"), false),
-        None => {
-            // Remove the trailing comma left by the last field.
-            if out.ends_with(",\n") {
-                out.truncate(out.len() - 2);
-                out.push('\n');
-            }
-        }
+    if let Some(rtt) = outcome.rtt_ms() {
+        fields.push(("rtt_ms".to_string(), format!("{rtt:.1}")));
     }
-    out.push_str("        }");
+    fields
+}
+
+fn write_object(out: &mut String, indent: usize, fields: &[(String, String)]) {
+    out.push_str(&" ".repeat(indent));
+    out.push_str("{\n");
+    for (index, (key, value)) in fields.iter().enumerate() {
+        out.push_str(&" ".repeat(indent + 2));
+        out.push_str(&json::quote(key));
+        out.push_str(": ");
+        out.push_str(value);
+        if index + 1 != fields.len() {
+            out.push(',');
+        }
+        out.push('\n');
+    }
+    out.push_str(&" ".repeat(indent));
+    out.push('}');
 }
 
 fn field(out: &mut String, indent: usize, key: &str, value: &str, comma: bool) {

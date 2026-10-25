@@ -25,9 +25,10 @@ endorsed: check the operator's terms first.
   reporting the mapped address, the server's `SOFTWARE` attribute and the
   round-trip time. A refused port, silence, and "no route from this host" are
   three different results.
-- **TURN reachability.** An Allocate request without credentials: a live server
-  answers 401, which counts as answered. Whether a credential works is not this
-  tool's job.
+- **TURN reachability.** An Allocate request: a live server answers 401. With
+  credentials it goes further — the 401's realm and nonce are answered with a
+  MESSAGE-INTEGRITY attribute, and the tool reports the relay address it was
+  given, which proves the credential works, not just that the endpoint is up.
 - **Diversity.** How many entries collapse onto one address, which entries share
   a netblock, and which publish no AAAA. A list of ten names that resolves to one
   address has ten entries and one point of failure.
@@ -65,9 +66,47 @@ into `stun.json`.
 Exit status is 0 when every shipped entry answered, 1 when one did not, and 2
 when the lists could not be read.
 
-## Why it has no dependencies
+## Credentialed TURN
 
-The tool exists because things outside this repository change. A tool that
-itself stops building is not much use, so it builds offline with any recent
-stable Rust and nothing else. `cargo test` runs the codec and DNS tests against
-captured packets and needs no network.
+The shipped lists never carry credentials. A target file names the environment
+variables instead:
+
+```json
+[
+  {
+    "name": "cloudflare-3478",
+    "urls": "turn:turn.cloudflare.com:3478?transport=udp",
+    "username_env": "TURN_CF_USERNAME",
+    "credential_env": "TURN_CF_CREDENTIAL"
+  }
+]
+```
+
+```sh
+cargo run --manifest-path tools/ice-check/Cargo.toml -- \
+    --turn-targets tools/ice-check/turn-targets.json \
+    --env-file .env
+```
+
+`--env-file` is for a laptop; CI exports the variables. The environment wins
+over the file. Only UDP URLs are probed: `turns:` and `?transport=tcp` are
+skipped, because this tool has no TLS or TCP transport. A target whose
+variables are unset is reported as skipped, not failed, so a checkout without
+secrets still runs cleanly.
+
+The workflow mints Cloudflare credentials from `TURN_TOKEN_ID` and
+`TURN_API_TOKEN` before the run. Other providers with static usernames and
+passwords need only the two secrets; Twilio and Cloudflare mint short-lived
+credentials, so their workflows call the provider first.
+
+## Why it has so few dependencies
+
+The tool exists because things outside this repository change, so it must not
+be fragile itself. It has no async runtime, no HTTP client and no CLI or JSON
+crate: arguments, the report and the DNS queries are all std. The three
+exceptions are `md-5`, `sha1` and `hmac`, which are what TURN's
+MESSAGE-INTEGRITY is defined in terms of; a hand-rolled digest would be the one
+part of this worth not improvising.
+
+`cargo test` runs the codec, DNS and crypto tests against captured packets and
+published vectors, and needs no network.

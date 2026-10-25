@@ -14,6 +14,11 @@ Options:
   --candidates      also probe the candidate list in src/candidates.rs
   --base <dir>      only probe entries added since the lists in <dir>, for a
                     pull request that proposes a server
+  --turn-targets <path>
+                    probe credentialed TURN endpoints listed in <path>; a
+                    target names the environment variables holding its
+                    username and credential
+  --env-file <path> read KEY=VALUE pairs from <path> for --turn-targets
   --json <path>     write the full result as JSON
   --suggest         print the entries that answered, as a JSON array
   --timeout-ms <n>  per-attempt timeout in milliseconds (default: 750)
@@ -36,6 +41,8 @@ pub struct Families {
 pub struct Options {
     pub root: PathBuf,
     pub base: Option<PathBuf>,
+    pub turn_targets: Option<PathBuf>,
+    pub env_file: Option<PathBuf>,
     pub candidates: bool,
     pub json: Option<PathBuf>,
     pub suggest: bool,
@@ -59,6 +66,8 @@ where
     let mut options = Options {
         root: PathBuf::new(),
         base: None,
+        turn_targets: None,
+        env_file: None,
         candidates: false,
         json: None,
         suggest: false,
@@ -77,6 +86,10 @@ where
             }
             "--candidates" => options.candidates = true,
             "--base" => options.base = Some(PathBuf::from(value(&mut args, "--base")?)),
+            "--turn-targets" => {
+                options.turn_targets = Some(PathBuf::from(value(&mut args, "--turn-targets")?))
+            }
+            "--env-file" => options.env_file = Some(PathBuf::from(value(&mut args, "--env-file")?)),
             "--json" => options.json = Some(PathBuf::from(value(&mut args, "--json")?)),
             "--suggest" => options.suggest = true,
             "--timeout-ms" => {

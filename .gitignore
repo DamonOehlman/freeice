@@ -1,8 +1,8 @@
-.tmp/
 .DS_Store
 node_modules
 npm-debug.log
 .tmp
+.env
 tools/ice-check/target
 test/integration/*/logs/*.log
 test/integration/*/logs/*.pid

@@ -5,9 +5,9 @@
 //! probes each entry the way a browser would, per address and per family, and
 //! says which entries still answer and how much genuine diversity the list has.
 //!
-//! It has no dependencies on purpose. The reason a list checker exists is that
-//! things outside this repository change; a tool that itself stops building is
-//! not much use.
+//! Its dependencies are the three RustCrypto primitives TURN's
+//! MESSAGE-INTEGRITY is defined in terms of, and nothing else: no async
+//! runtime, no HTTP client, no CLI or JSON crate.
 
 mod candidates;
 mod cli;
@@ -17,6 +17,7 @@ mod list;
 mod probe;
 mod report;
 mod stun;
+mod targets;
 
 use std::collections::HashSet;
 use std::process::ExitCode;
@@ -115,10 +116,47 @@ fn run(options: cli::Options) -> ExitCode {
         options.families,
     );
 
-    report::print(&results, &candidate_results, &options);
+    let (targets, env_file) = match &options.turn_targets {
+        Some(path) => {
+            let targets = match targets::load(path) {
+                Ok(targets) => targets,
+                Err(error) => {
+                    eprintln!("ice-check: {error}");
+                    return ExitCode::from(2);
+                }
+            };
+            let env_file = match &options.env_file {
+                Some(path) => match targets::load_env_file(path) {
+                    Ok(values) => values,
+                    Err(error) => {
+                        eprintln!("ice-check: {error}");
+                        return ExitCode::from(2);
+                    }
+                },
+                None => Vec::new(),
+            };
+            (targets, env_file)
+        }
+        None => (Vec::new(), Vec::new()),
+    };
+    let target_results = report::check_targets(
+        &targets,
+        &env_file,
+        &servers,
+        options.timeout,
+        options.attempts,
+        options.families,
+    );
+
+    report::print(&results, &candidate_results, &target_results, &options);
 
     if let Some(path) = &options.json {
-        let document = report::to_json(&results, &candidate_results, options.base.as_deref());
+        let document = report::to_json(
+            &results,
+            &candidate_results,
+            &target_results,
+            options.base.as_deref(),
+        );
         if let Err(error) = std::fs::write(path, document) {
             eprintln!("ice-check: cannot write {}: {error}", path.display());
             return ExitCode::from(2);
@@ -132,7 +170,9 @@ fn run(options: cli::Options) -> ExitCode {
         print!("{}", report::suggest(&results));
     }
 
-    if results.iter().any(|result| !result.answered()) {
+    let lists_failed = results.iter().any(|result| !result.answered());
+    let targets_failed = target_results.iter().any(|target| !target.passed());
+    if lists_failed || targets_failed {
         ExitCode::from(1)
     } else {
         ExitCode::SUCCESS

@@ -6,10 +6,21 @@ use std::fmt;
 use std::hash::{BuildHasher, Hasher};
 use std::net::{Ipv4Addr, Ipv6Addr};
 
+use hmac::{Hmac, KeyInit, Mac};
+use md5::{Digest, Md5};
+use sha1::Sha1;
+
+type HmacSha1 = Hmac<Sha1>;
+
 pub const MAGIC: u32 = 0x2112_A442;
 
 const ATTR_MAPPED_ADDRESS: u16 = 0x0001;
+const ATTR_USERNAME: u16 = 0x0006;
+const ATTR_MESSAGE_INTEGRITY: u16 = 0x0008;
 const ATTR_ERROR_CODE: u16 = 0x0009;
+const ATTR_REALM: u16 = 0x0014;
+const ATTR_NONCE: u16 = 0x0015;
+const ATTR_XOR_RELAYED_ADDRESS: u16 = 0x0016;
 const ATTR_REQUESTED_TRANSPORT: u16 = 0x0019;
 const ATTR_XOR_MAPPED_ADDRESS: u16 = 0x0020;
 const ATTR_SOFTWARE: u16 = 0x8022;
@@ -144,6 +155,99 @@ pub fn decode(bytes: &[u8]) -> Result<Message<'_>, DecodeError> {
 /// The message class: 0 request, 1 indication, 2 success, 3 error.
 pub fn class(message_type: u16) -> u8 {
     (((message_type >> 4) & 1) | ((message_type >> 7) & 2)) as u8
+}
+
+pub struct Challenge {
+    pub realm: String,
+    pub nonce: String,
+}
+
+pub fn challenge(message: &Message<'_>) -> Option<Challenge> {
+    Some(Challenge {
+        realm: string_attribute(message, ATTR_REALM)?,
+        nonce: string_attribute(message, ATTR_NONCE)?,
+    })
+}
+
+/// A TURN Allocate authenticated with long-term credentials (RFC 5389 section
+/// 15.4): MD5 over `username:realm:password` keys an HMAC-SHA1 over the message
+/// so far, with the header length already counting the attribute being added.
+pub fn authenticated_allocate(challenge: &Challenge, username: &str, password: &str) -> Request {
+    let transaction_id = random_transaction_id();
+
+    let mut attributes = Vec::new();
+    attributes.extend_from_slice(&ATTR_REQUESTED_TRANSPORT.to_be_bytes());
+    attributes.extend_from_slice(&4u16.to_be_bytes());
+    attributes.extend_from_slice(&REQUESTED_TRANSPORT_UDP.to_be_bytes());
+    push_string(&mut attributes, ATTR_USERNAME, username);
+    push_string(&mut attributes, ATTR_REALM, &challenge.realm);
+    push_string(&mut attributes, ATTR_NONCE, &challenge.nonce);
+
+    // MESSAGE-INTEGRITY is 4 bytes of header and 20 of value, and the length
+    // field must already include it when the digest is computed.
+    let length = attributes.len() + 24;
+    let mut bytes = Vec::with_capacity(20 + length);
+    bytes.extend_from_slice(&Kind::Allocate.request_type().to_be_bytes());
+    bytes.extend_from_slice(&(length as u16).to_be_bytes());
+    bytes.extend_from_slice(&MAGIC.to_be_bytes());
+    bytes.extend_from_slice(&transaction_id);
+    bytes.extend_from_slice(&attributes);
+
+    let integrity = message_integrity(username, &challenge.realm, password, &bytes);
+    bytes.extend_from_slice(&ATTR_MESSAGE_INTEGRITY.to_be_bytes());
+    bytes.extend_from_slice(&20u16.to_be_bytes());
+    bytes.extend_from_slice(&integrity);
+
+    Request {
+        bytes,
+        transaction_id,
+    }
+}
+
+pub fn message_integrity(username: &str, realm: &str, password: &str, message: &[u8]) -> [u8; 20] {
+    let mut digest = Md5::new();
+    digest.update(username.as_bytes());
+    digest.update(b":");
+    digest.update(realm.as_bytes());
+    digest.update(b":");
+    digest.update(password.as_bytes());
+    let key = digest.finalize();
+
+    let mut mac = HmacSha1::new_from_slice(&key).expect("HMAC accepts any key length");
+    mac.update(message);
+    let mut out = [0u8; 20];
+    out.copy_from_slice(&mac.finalize().into_bytes());
+    out
+}
+
+fn push_string(out: &mut Vec<u8>, kind: u16, value: &str) {
+    let bytes = value.as_bytes();
+    out.extend_from_slice(&kind.to_be_bytes());
+    out.extend_from_slice(&(bytes.len() as u16).to_be_bytes());
+    out.extend_from_slice(bytes);
+    out.resize(out.len() + (4 - bytes.len() % 4) % 4, 0);
+}
+
+fn string_attribute(message: &Message<'_>, kind: u16) -> Option<String> {
+    let attribute = message
+        .attributes
+        .iter()
+        .find(|attribute| attribute.kind == kind)?;
+    Some(String::from_utf8_lossy(attribute.value).into_owned())
+}
+
+pub fn relayed_address(message: &Message<'_>) -> Option<String> {
+    for attribute in &message.attributes {
+        let xored = match attribute.kind {
+            ATTR_XOR_RELAYED_ADDRESS => true,
+            ATTR_MAPPED_ADDRESS => false,
+            _ => continue,
+        };
+        if let Some(address) = decode_address(attribute.value, xored, &message.transaction_id) {
+            return Some(address);
+        }
+    }
+    None
 }
 
 pub fn mapped_address(message: &Message<'_>) -> Option<String> {
@@ -305,6 +409,57 @@ mod tests {
         let mut bytes = request(Kind::Binding).bytes;
         bytes[4] = 0;
         assert!(matches!(decode(&bytes), Err(DecodeError::BadCookie)));
+    }
+
+    fn hex(bytes: &[u8]) -> String {
+        bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+    }
+
+    #[test]
+    fn message_integrity_matches_a_cross_checked_vector() {
+        // key = md5("user:realm:pass"), mac = hmac-sha1(key, "hello"), computed
+        // independently with Python's hashlib and hmac.
+        assert_eq!(
+            hex(&message_integrity("user", "realm", "pass", b"hello")),
+            "bcacc0e0d91a6a7b1a3a73dc7b1e2f76ed4c84b5"
+        );
+    }
+
+    #[test]
+    fn authenticated_allocate_counts_the_integrity_attribute() {
+        let challenge = Challenge {
+            realm: "example.org".to_string(),
+            nonce: "nonce".to_string(),
+        };
+        let request = authenticated_allocate(&challenge, "user", "pass");
+        let declared = u16::from_be_bytes([request.bytes[2], request.bytes[3]]) as usize;
+        assert_eq!(declared, request.bytes.len() - 20);
+        let tail = &request.bytes[request.bytes.len() - 24..];
+        assert_eq!(&tail[0..2], &ATTR_MESSAGE_INTEGRITY.to_be_bytes());
+        assert_eq!(&tail[2..4], &[0x00, 0x14]);
+    }
+
+    #[test]
+    fn reads_the_realm_and_nonce_from_a_challenge() {
+        let realm = b"example.org";
+        let nonce = b"abcdef";
+        let message = Message {
+            message_type: 0x0113,
+            transaction_id: [0u8; 12],
+            attributes: vec![
+                Attribute {
+                    kind: ATTR_REALM,
+                    value: realm,
+                },
+                Attribute {
+                    kind: ATTR_NONCE,
+                    value: nonce,
+                },
+            ],
+        };
+        let challenge = challenge(&message).unwrap();
+        assert_eq!(challenge.realm, "example.org");
+        assert_eq!(challenge.nonce, "abcdef");
     }
 
     #[test]
