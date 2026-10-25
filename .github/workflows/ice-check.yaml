@@ -1,0 +1,157 @@
+name: ice-check
+
+on:
+  schedule:
+    # Every six hours: four checks a day, 28 in the week the promotion window
+    # looks at. A list of free servers rots without a runner.
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
+  push:
+    paths:
+      - "stun.json"
+      - "turn.json"
+      - "tools/ice-check/**"
+      - ".github/workflows/ice-check.yaml"
+  pull_request:
+    paths:
+      - "stun.json"
+      - "turn.json"
+      - "tools/ice-check/**"
+      - ".github/workflows/ice-check.yaml"
+
+permissions:
+  contents: read
+
+jobs:
+  # Every server, on a schedule and on a change to the tooling.
+  lists:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    # One ledger writer at a time: two runs restoring the same state would lose
+    # one of the samples.
+    concurrency:
+      group: ice-check-lists
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Restore the availability ledger
+        uses: actions/cache/restore@v4
+        with:
+          path: .tmp/availability.json
+          key: ice-availability-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            ice-availability-
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Test the checker
+        run: cargo test --manifest-path tools/ice-check/Cargo.toml
+
+      - name: Mint Cloudflare TURN credentials
+        env:
+          TURN_TOKEN_ID: ${{ secrets.TURN_TOKEN_ID }}
+          TURN_API_TOKEN: ${{ secrets.TURN_API_TOKEN }}
+        run: |
+          if [ -z "$TURN_TOKEN_ID" ] || [ -z "$TURN_API_TOKEN" ]; then
+            echo "TURN_TOKEN_ID or TURN_API_TOKEN is not set; the TURN target will be skipped"
+            exit 0
+          fi
+          response=$(curl -sS -X POST \
+            "https://rtc.live.cloudflare.com/v1/turn/keys/${TURN_TOKEN_ID}/credentials/generate-ice-servers" \
+            -H "Authorization: Bearer ${TURN_API_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d '{"ttl": 900}')
+          username=$(printf '%s' "$response" | jq -r '(.iceServers | if type == "array" then .[] else . end) | objects | select(.username) | .username')
+          credential=$(printf '%s' "$response" | jq -r '(.iceServers | if type == "array" then .[] else . end) | objects | select(.username) | .credential')
+          if [ -z "$username" ] || [ "$username" = "null" ]; then
+            echo "Cloudflare returned no credentialed iceServers; top-level keys: $(printf '%s' "$response" | jq -r 'keys | join(",")')" >&2
+            exit 1
+          fi
+          echo "::add-mask::$username"
+          echo "::add-mask::$credential"
+          echo "TURN_CF_USERNAME=$username" >> "$GITHUB_ENV"
+          echo "TURN_CF_CREDENTIAL=$credential" >> "$GITHUB_ENV"
+
+      - name: Fetch the always-online-stun candidates
+        run: |
+          mkdir -p .tmp
+          if curl -sS --fail --max-time 30 -o .tmp/always-online.txt \
+              https://raw.githubusercontent.com/pradt2/always-online-stun/master/valid_hosts.txt; then
+            echo "fetched $(wc -l < .tmp/always-online.txt) candidates"
+          else
+            rm -f .tmp/always-online.txt
+            echo "could not fetch the candidate list; continuing without it"
+          fi
+
+      - name: Probe the server lists
+        run: |
+          set -o pipefail
+          extra=""
+          if [ -s .tmp/always-online.txt ]; then
+            extra="--candidates-file .tmp/always-online.txt"
+          fi
+          status=0
+          cargo run --quiet --manifest-path tools/ice-check/Cargo.toml -- \
+            $extra \
+            --record .tmp/availability.json \
+            --availability .tmp/availability.json \
+            --threshold 90 --min-checks 20 \
+            --turn-targets tools/ice-check/turn-targets.json \
+            --json ice-check.json | tee report.txt || status=$?
+          printf '\n' >> "$GITHUB_STEP_SUMMARY"
+          cat report.txt >> "$GITHUB_STEP_SUMMARY"
+          exit $status
+
+      - name: Save the availability ledger
+        if: always() && hashFiles('.tmp/availability.json') != ''
+        uses: actions/cache/save@v4
+        with:
+          path: .tmp/availability.json
+          key: ice-availability-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ice-check
+          path: |
+            ice-check.json
+            report.txt
+            .tmp/availability.json
+
+  # Only what the pull request adds, so a proposal is judged on its own server.
+  proposed-servers:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Test the checker
+        run: cargo test --manifest-path tools/ice-check/Cargo.toml
+
+      - name: Snapshot the base lists
+        run: |
+          mkdir -p .tmp/base
+          git show "origin/${{ github.base_ref }}:stun.json" > .tmp/base/stun.json 2>/dev/null || echo '[]' > .tmp/base/stun.json
+          git show "origin/${{ github.base_ref }}:turn.json" > .tmp/base/turn.json 2>/dev/null || echo '[]' > .tmp/base/turn.json
+
+      - name: Probe the added servers
+        run: |
+          set -o pipefail
+          cargo run --quiet --manifest-path tools/ice-check/Cargo.toml -- --base .tmp/base --json proposed-servers.json | tee report.txt
+          printf '\n' >> "$GITHUB_STEP_SUMMARY"
+          cat report.txt >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: proposed-servers
+          path: |
+            proposed-servers.json
+            report.txt
